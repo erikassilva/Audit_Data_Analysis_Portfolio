@@ -4,6 +4,8 @@ import numpy as np
 np.random.seed(42)
 n = 500
 
+#  dados utilizados são simulados para representar cenários reais de auditoria, incluindo inconsistências intencionais para análise.
+
 df = pd.DataFrame({
     'data': pd.date_range('2024-01-01', periods=n, freq='D').to_list()[:n],
     'funcionario': np.random.choice(['Ana Silva','Carlos Matos','Beatriz Lima','João Costa'], n),
