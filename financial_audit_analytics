@@ -1,0 +1,105 @@
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import random
+
+# =========================
+# 1. GENERATE SAMPLE DATA
+# =========================
+
+np.random.seed(42)
+
+num_records = 500
+
+start_date = datetime(2025, 1, 1)
+
+data = []
+
+suppliers = ['SAP', 'Oracle', 'IBM', 'Accenture', 'Deloitte', 'Amazon', 'Microsoft']
+users = ['user01', 'user02', 'user03', 'user04']
+cost_centers = ['IT', 'Finance', 'HR', 'Procurement']
+
+for i in range(num_records):
+    date = start_date + timedelta(days=np.random.randint(0, 365),
+                                  hours=np.random.randint(0, 24))
+
+    supplier = random.choice(suppliers)
+    value = round(np.random.normal(5000, 2000), 2)
+
+    # Inject some anomalies
+    if random.random() < 0.02:
+        value = round(np.random.uniform(20000, 50000), 2)
+
+    user = random.choice(users)
+    cost_center = random.choice(cost_centers)
+
+    data.append([i+1, date, supplier, value, user, cost_center])
+
+df = pd.DataFrame(data, columns=[
+    'ID', 'Date', 'Supplier', 'Amount', 'User', 'CostCenter'
+])
+
+# Inject duplicate transactions
+duplicates = df.sample(10)
+df = pd.concat([df, duplicates])
+
+df.to_excel("financial_data.xlsx", index=False)
+
+print("✅ Sample data generated: financial_data.xlsx")
+
+# =========================
+# 2. LOAD DATA
+# =========================
+
+df['Date'] = pd.to_datetime(df['Date'])
+
+# =========================
+# 3. DUPLICATE DETECTION
+# =========================
+
+duplicates_analysis = df.groupby(['Supplier', 'Amount']).size().reset_index(name='Count')
+duplicates_analysis = duplicates_analysis[duplicates_analysis['Count'] > 1]
+
+# =========================
+# 4. OUTLIER DETECTION (Z-SCORE)
+# =========================
+
+mean = df['Amount'].mean()
+std = df['Amount'].std()
+
+df['Z_score'] = (df['Amount'] - mean) / std
+outliers = df[np.abs(df['Z_score']) > 3]
+
+# =========================
+# 5. USER ANALYSIS
+# =========================
+
+user_analysis = df.groupby('User')['Amount'].agg(['count', 'sum']).reset_index()
+
+# =========================
+# 6. OUT-OF-HOURS TRANSACTIONS
+# =========================
+
+df['Hour'] = df['Date'].dt.hour
+out_of_hours = df[(df['Hour'] < 8) | (df['Hour'] > 18)]
+
+# =========================
+# 7. BENFORD'S LAW
+# =========================
+
+df['FirstDigit'] = df['Amount'].astype(str).str.replace('.', '').str[0]
+benford = df['FirstDigit'].value_counts(normalize=True).sort_index()
+
+# =========================
+# 8. EXPORT AUDIT REPORT
+# =========================
+
+with pd.ExcelWriter("audit_report.xlsx") as writer:
+    df.to_excel(writer, sheet_name='Raw_Data', index=False)
+    duplicates_analysis.to_excel(writer, sheet_name='Duplicates', index=False)
+    outliers.to_excel(writer, sheet_name='Outliers', index=False)
+    user_analysis.to_excel(writer, sheet_name='User_Analysis', index=False)
+    out_of_hours.to_excel(writer, sheet_name='Out_of_Hours', index=False)
+    benford.to_frame(name="Distribution").to_excel(writer, sheet_name='Benford')
+
+print("✅ Audit report generated: audit_report.xlsx")
