@@ -1,1 +1,134 @@
+import pandas as pd
+import numpy as np
+
+# Database Preparation
+
+np.random.seed(42)
+
+n_contratos = 30
+range_elevadores = (30 , 150)
+
+rows = []
+
+for contrato_id in range(1000, 1000 + n_contratos):
+    n_elevadores = np.random.randint(*range_elevadores)
+    for elev_id in range(n_elevadores):
+      elevador_id = f"{contrato_id}-{elev_id}"
+      
+      for mes in pd.date_range('2025-01-01', '2025-12-01', freq='MS'):
+        planejado = np.random.randint(1, 3)
+        realizado = int(round(
+            planejado * np.random.uniform(0.7, 1.05)
+        ))
+
+        realizado = max(realizado, 0)
+        valor_unit = 120
+        faturamento = realizado * valor_unit * np.random.uniform(0.95, 1.15)
+        rows.append([
+            contrato_id, 
+            elev_id, 
+            mes, 
+            planejado, 
+            realizado, 
+            valor_unit, 
+            faturamento])
+        
+        
+servicos = pd.DataFrame(rows, columns=[
+    'contrato_id', 
+    'elev_id', 
+    'mes', 
+    'planejado', 
+    'realizado', 
+    'valor_unit', 
+    'faturamento'
+    ])
+
+
+contratos = servicos[['contrato_id']].drop_duplicates()
+
+elevadores = servicos[['contrato_id', 'elev_id']].drop_duplicates()
+
+servicos.to_csv('servicos.csv', index=False)
+contratos.to_csv('contratos.csv', index=False)
+elevadores.to_csv('elevadores.csv', index=False)
+
+#
+
+print('Arquivos gerados com sucesso!')
+print('Servicos: ', servicos.shape)
+print('Contratos: ', contratos.shape)
+print('Elevadores: ', elevadores.shape)
+
+np.random.uniform(0.5, 1.0)
+
+faturamento = planejado * valor_unit * np.random.uniform(1.0, 1.3)
+
+# Audit Analysis
+
+resumo_global = servicos.groupby('mes').agg({
+    'planejado': 'sum',
+    'realizado': 'sum',
+})
+
+resumo_global['gap'] = resumo_global['realizado'] - resumo_global['planejado']
+resumo_global['gap_perc'] = resumo_global['gap'] / resumo_global['planejado']
+
+resumo_global.head(10)
+
+contrato = servicos.groupby(['contrato_id']).agg({
+    'planejado': 'sum',
+    'realizado': 'sum',
+})
+
+contrato['gap'] = contrato['realizado'] - contrato['planejado']
+contrato['gap_perc'] = contrato['gap'] / contrato['planejado']
+
+contrato.head(10)
+
+contrato_risco = contrato[contrato['gap_perc'] < 0.9]
+
+contrato_risco
+
+elevador = servicos.groupby(['contrato_id', 'elev_id']).agg({
+    'planejado': 'sum',
+    'realizado': 'sum',
+}).reset_index()
+
+elevador['taxa_execucao'] = elevador['realizado'] / elevador['planejado']
+
+elevador.head(10)
+
+elevador_risco = elevador[elevador['taxa_execucao'] < 0.8]
+
+elevador_risco
+
+cobertura = elevador.groupby('contrato_id')['taxa_execucao']\
+.apply(lambda  x: (x < 0.8).mean())\
+.reset_index(name='pct_elevadores_problematicos')
+
+contratos_criticos = cobertura[cobertura['pct_elevadores_problematicos'] > 0.2 ]
+
+contratos_criticos.head(10)
+
+valor_unit = 120
+
+servicos['faturamento_esperado'] = servicos['planejado'] * valor_unit
+
+servicos['faturamento_realizado'] = servicos['realizado'] * valor_unit
+
+servicos['desvio_faturamento'] = servicos['faturamento_realizado'] - servicos['faturamento_esperado']
+
+overbilling = servicos[servicos['desvio_faturamento'] > 0]
+underbilling = servicos[servicos['desvio_faturamento'] < 0]
+
+overbilling.head(10)
+underbilling.head(10)
+
+audit_check = servicos[
+    (servicos['realizado'] == 0) &
+    (servicos['faturamento_realizado'] > 0)
+]
+
+audit_check.head(10)
 
