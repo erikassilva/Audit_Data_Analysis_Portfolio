@@ -1,0 +1,145 @@
+import pandas as pd
+import numpy as np
+
+np.random.seed(42)
+
+n_contracts = 500
+months = pd.date_range(start="2026-01-01", periods=12, freq="MS").strftime("%Y-%m")
+
+contracts = pd.DataFrame({
+    "contract_id": np.arange(1, n_contracts + 1),
+    "customer_id": np.random.randint(1, 101, n_contracts),
+    "start_date": "2026-01-01",
+    "end_date" : "2030-06-08",
+    "billing_frequency" : np.random.choice(["Monthly", "Quarterly", "Annually"], n_contracts),
+    "annual_value": np.random.randint(1200, 100000, n_contracts)
+
+})
+
+contracts["monthyly_value"] = contracts["annual_value"] / 12
+
+months = pd.date_range(
+    start="2026-01-01",
+    periods=12,
+    freq="MS"
+).strftime("%Y-%m")
+
+service_list = []
+
+for _, c in contracts.iterrows():
+  for m in months:
+    planned = np.random.randint(4, 10)
+    actual = np.random.randint(0, planned + 1)
+
+    service_list.append({
+        "contract_id": c["contract_id"],
+        "month": m,
+        "planned": planned,
+        "actual": actual
+    })
+
+service_list = pd.DataFrame(service_list)
+
+invoice_list = []
+
+for _, c in contracts.iterrows():
+  monthly_value = c["monthyly_value"]
+  freq = c["billing_frequency"]
+
+  for i, m in enumerate(months):
+
+    invoice_value = 0
+
+    if freq == "Monthly":
+      invoice_value = monthly_value
+    elif freq == "Quarterly":
+      invoice_value = monthly_value * 3
+    elif freq == "Annually":
+      invoice_value = monthly_value * 12
+
+    invoice_list.append({
+        "contract_id": c["contract_id"],
+        "month": m,
+        "value": invoice_value
+    })
+
+invoice_list = pd.DataFrame(invoice_list)
+
+contracts.to_excel("contracts.xlsx", index=False)
+service_list.to_excel("service_list.xlsx", index=False)
+invoice_list.to_excel("invoice_list.xlsx", index=False)
+
+print("bases exportadas com sucesso")
+
+# IFRS15 (Revenue)
+
+analysis = service_list.merge(
+    contracts[["contract_id", "monthyly_value"]],
+    on="contract_id"
+)
+
+analysis["progess"] = np.where(
+    analysis['planned'] > 0,
+        analysis["actual"] / analysis["planned"], 0)
+
+analysis["recognized_revenue"] = (analysis["progess"] * analysis["monthyly_value"])
+
+analysis['monthly_difference'] = analysis["recognized_revenue"] - analysis['monthyly_value']
+
+analysis = analysis.sort_values(['contract_id', 'month'])
+
+analysis['cum_revenue'] = (
+    analysis.groupby('contract_id')['recognized_revenue']
+    .cumsum()
+)
+
+analysis['cum_billing_value'] = (
+    analysis.groupby('contract_id')['monthyly_value']
+    .cumsum()
+) 
+
+analysis['contract_balance'] = (
+    analysis['cum_billing_value'] - analysis['cum_revenue']
+)
+
+analysis['contract_position'] = np.where(
+    analysis['contract_balance'] > 0,
+    ['contract asset'],
+    np.where(
+        analysis['contract_balance'] < 0,
+        ['contract liability'],
+        'contract equity'
+    )
+)
+
+monthly_summary = analysis.groupby('month', as_index=False).agg({
+    'contract_id': 'count',
+    'actual': 'sum',
+    'planned': 'sum',
+    'cum_revenue': 'last',
+    'cum_billing_value': 'last',
+    'contract_balance': 'last'
+})
+
+monthly_summary['delta_rec_vc_bill'] = (
+    monthly_summary['cum_revenue'] / monthly_summary['cum_billing_value']
+)
+
+monthly_summary
+
+contract_summary = analysis.groupby('contract_id', as_index=False).agg({
+    'monthyly_value': 'last',
+    'month': 'count',
+    'actual': 'sum',
+    'planned': 'sum',
+    'cum_revenue': 'last',
+    'cum_billing_value': 'last',
+    'contract_balance': 'last',
+    'contract_position': 'last'
+})
+
+contract_summary['delta_rec_vc_bill'] = (
+    contract_summary['cum_revenue'] - contract_summary['cum_billing_value']
+)
+
+contract_summary.sort_values('delta_rec_vc_bill', ascending=True).head(10)
