@@ -1,0 +1,272 @@
+import pandas as pd
+import numpy as np
+import argparse
+from scipy import stats
+import matplotlib.pyplot as plt
+from datetime import date
+
+# ---------------------------------------------------------------------------
+# Dados de referência
+# ---------------------------------------------------------------------------
+
+FORNECEDORES_NORMAIS = [
+    "Tech Solutions Lda",
+    "Global Services SA",
+    "Prime Consulting",
+    "Alpha Supplies",
+    "Beta Systems",
+    "Omega Group",
+    "Delta Corp",
+    "Sigma Partners",
+    "Kappa Trade",
+    "Zeta Logistics",
+]
+
+FORNECEDORES_SUSPEITOS = [
+    "Fornecedor Fantasma Lda",
+    "RJ Consulting Unip",
+    "XY Trade & Services",
+]
+
+TIPOS = ["Serviços", "Material", "Consultoria", "Viagens", "TI", "Marketing"]
+
+CENTROS_CUSTO = ["CC001", "CC002", "CC003", "CC004", "CC005"]
+
+DESCRICOES_NORMAL = [
+    "Prestação de serviços mensais",
+    "Fornecimento de material de escritório",
+    "Consultoria técnica",
+    "Deslocações e alojamento",
+    "Licenças de software",
+    "Serviços de marketing digital",
+    "Manutenção de equipamentos",
+    "Formação profissional",
+]
+
+DESCRICOES_FRAUDE = [
+    "Consultoria estratégica",
+    "Serviços de assessoria",
+    "Suporte técnico especializado",
+    "Gestão de projeto",
+]
+
+
+def gerar_lancamentos_normais(n: int, rng: np.random.Generator) -> list[dict]:
+    """Gera transações que seguem naturalmente a Lei de Benford."""
+    registos = []
+    for _ in range(n):
+        # Log-normal produz distribuição que obedece a Benford
+        valor = round(float(np.exp(rng.uniform(3.5, 10.5))), 2)
+        registos.append({
+            "fornecedor":    rng.choice(FORNECEDORES_NORMAIS),
+            "tipo":          rng.choice(TIPOS),
+            "centro_custo":  rng.choice(CENTROS_CUSTO),
+            "descricao":     rng.choice(DESCRICOES_NORMAL),
+            "valor":         valor,
+            "tipo_registo":  "normal",
+        })
+    return registos
+
+
+def gerar_fraude_splitting(n: int, limite: float, rng: np.random.Generator) -> list[dict]:
+    """
+    Fraude de splitting: faturas criadas logo abaixo do limite de aprovação
+    para evitar escrutínio. Produz excesso no dígito inicial de (limite-1).
+    """
+    registos = []
+    margem_baixa  = limite * 0.90   # ex: 4500 para limite=5000
+    margem_alta   = limite * 0.999  # ex: 4999.5
+    for _ in range(n):
+        valor = round(float(rng.uniform(margem_baixa, margem_alta)), 2)
+        registos.append({
+            "fornecedor":    rng.choice(FORNECEDORES_SUSPEITOS[:2]),
+            "tipo":          "Consultoria",
+            "centro_custo":  rng.choice(["CC003", "CC004"]),
+            "descricao":     rng.choice(DESCRICOES_FRAUDE),
+            "valor":         valor,
+            "tipo_registo":  "fraude_splitting",
+        })
+    return registos
+
+
+def gerar_fraude_duplicados(n_pares: int, rng: np.random.Generator) -> list[dict]:
+    """
+    Fraude de duplicados: o mesmo valor é submetido duas vezes
+    com pequenas variações na descrição.
+    """
+    registos = []
+    for _ in range(n_pares):
+        valor = round(float(rng.uniform(1500, 4000)), 2)
+        for _ in range(2):  # duplicado
+            registos.append({
+                "fornecedor":    "RJ Consulting Unip",
+                "tipo":          rng.choice(["Consultoria", "Serviços"]),
+                "centro_custo":  "CC004",
+                "descricao":     rng.choice(DESCRICOES_FRAUDE),
+                "valor":         valor,
+                "tipo_registo":  "fraude_duplicado",
+            })
+    return registos
+
+
+def gerar_fraude_ghost_vendor(n: int, rng: np.random.Generator) -> list[dict]:
+    """
+    Ghost vendor: fornecedor fictício com padrão de valores anómalos.
+    """
+    registos = []
+    for _ in range(n):
+        # Valores redondos ou semi-redondos — outra assinatura de fraude
+        base  = int(rng.choice([500, 1000, 1500, 2000, 2500, 3000]))
+        valor = float(base + rng.integers(0, 50))
+        registos.append({
+            "fornecedor":    "XY Trade & Services",
+            "tipo":          "Serviços",
+            "centro_custo":  rng.choice(["CC001", "CC005"]),
+            "descricao":     "Serviços diversos",
+            "valor":         valor,
+            "tipo_registo":  "fraude_ghost_vendor",
+        })
+    return registos
+
+
+# ---------------------------------------------------------------------------
+# Montagem e exportação
+# ---------------------------------------------------------------------------
+
+def gerar_base(
+    n: int = 1000,
+    proporcao_fraude: float = 0.25,
+    seed: int = 42,
+    limite_aprovacao: float = 5000.0,
+    output: str = "lancamentos_simulados.csv",
+) -> pd.DataFrame:
+
+    rng = np.random.default_rng(seed)
+
+    n_fraude  = int(n * proporcao_fraude)
+    n_normal  = n - n_fraude
+
+    # Distribuir fraudes entre os três tipos
+    n_splitting  = int(n_fraude * 0.50)
+    n_duplicados = int(n_fraude * 0.25) // 2   # pares
+    n_ghost      = n_fraude - n_splitting - (n_duplicados * 2)
+
+    registos = (
+        gerar_lancamentos_normais(n_normal, rng)
+        + gerar_fraude_splitting(n_splitting, limite_aprovacao, rng)
+        + gerar_fraude_duplicados(n_duplicados, rng)
+        + gerar_fraude_ghost_vendor(n_ghost, rng)
+    )
+
+    df = pd.DataFrame(registos)
+
+    # Datas aleatórias no ano corrente
+    datas = pd.date_range("2024-01-01", "2024-12-31")
+    df["data"] = rng.choice(datas, size=len(df))
+    df["data"] = pd.to_datetime(df["data"]).dt.date
+
+    # Numeração sequencial de faturas
+    df = df.sample(frac=1, random_state=seed).reset_index(drop=True)
+    df["numero_fatura"] = ["FAT-" + str(200000 + i) for i in range(len(df))]
+
+    # Ordenar por data
+    df = df.sort_values("data").reset_index(drop=True)
+
+    # Colunas finais (nota: em dados reais não haveria a coluna tipo_registo)
+    df = df[[
+        "numero_fatura", "data", "fornecedor", "tipo",
+        "centro_custo", "descricao", "valor", "tipo_registo"
+    ]]
+
+    df.to_csv(output, index=False, encoding="utf-8-sig")
+
+    # Resumo
+    print("=" * 55)
+    print("  Base de lançamentos gerada com sucesso")
+    print("=" * 55)
+    print(f"  Ficheiro   : {output}")
+    print(f"  Total      : {len(df):,} lançamentos")
+    print(f"  Normais    : {(df['tipo_registo']=='normal').sum():,}")
+    print(f"  Fraudes    : {(df['tipo_registo']!='normal').sum():,} ({proporcao_fraude*100:.0f}%)")
+    print("-" * 55)
+    print("  Tipos de fraude:")
+    for tipo, cnt in df[df["tipo_registo"] != "normal"]["tipo_registo"].value_counts().items():
+        print(f"    {tipo:<25} {cnt:>5}")
+    print("=" * 55)
+    print(df.head(8).to_string(index=False))
+    print("  ...")
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Entrada por linha de comandos
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Gera base de lançamentos contabilísticos simulada com fraude."
+    )
+    parser.add_argument("--n",      type=int,   default=1000,                      help="Total de lançamentos (padrão: 1000)")
+    parser.add_argument("--fraude", type=float, default=0.25,                      help="Proporção de fraudes 0.0–0.5 (padrão: 0.25)")
+    parser.add_argument("--seed",   type=int,   default=42,                        help="Semente aleatória (padrão: 42)")
+    parser.add_argument("--limite", type=float, default=5000.0,                    help="Limite de aprovação para splitting (padrão: 5000)")
+    parser.add_argument("--output", type=str,   default="lancamentos_simulados.csv", help="Nome do ficheiro de saída")
+    args = parser.parse_args([])
+
+    gerar_base(
+        n=args.n,
+        proporcao_fraude=args.fraude,
+        seed=args.seed,
+        limite_aprovacao=args.limite,
+        output=args.output,
+    )
+
+df = pd.read_csv("lancamentos_simulados.csv")
+df = df[df["valor"] > 0].copy()
+
+df["primeiro_digito"] = (
+    df["valor"]
+    .apply(lambda x: str(x).split(".")[0][0])
+    .astype(int)
+)
+
+obs = df["primeiro_digito"].value_counts(normalize=True).sort_index() * 100
+
+benford = {d: np.log10(1 + 1/d) * 100 for d in range(1, 10)}
+benford_series = pd.Series(benford)
+
+n = len(df)
+observed_counts = df["primeiro_digito"].value_counts().sort_index()
+expected_counts = benford_series /100 * n
+
+chi2, p_value = stats.chisquare(
+    f_obs=observed_counts,
+    f_exp=expected_counts,
+)
+
+print(f"Chi² = {chi2:.2f} | p-value = {p_value:.4f}")
+print("SUSPEITO" if p_value < 0.05 else "CONFORME")
+
+desvios = (obs - benford_series).rename("desvio_pp")
+alertas = desvios[desvios.abs() > 3].sort_values(key=abs, ascending=False)
+print("\nDigitos com desvio > 3 p.p.:")
+print(alertas)
+
+from pdb import line_prefix
+fig, ax = plt.subplots(figsize=(10, 6))
+x = np.arange(1, 10)
+ax.bar(x - 0.2, obs, width=0.4, label='Observado',
+       color = ["#E24B4A" if abs(obs[d] - benford[d]) > 5 else
+              "#EF9F27" if abs(obs[d] - benford[d]) > 2.5 else
+              "#378ADD" for d in range(1, 10)])
+ax.plot(x, benford_series, "o--", color="#444", linewidth=1.5,
+        label="Esperado Benford", markersize=5)
+ax.set_xticks(x)
+ax.set_xlabel("primeiro digito")
+ax.set_ylabel("frequencia (%)")
+ax.set_title(f"lei de benford | x= {chi2:.1f} | p= {p_value:.4f}")
+ax.legend()
+
+plt.tight_layout()
+plt.savefig("benford_resultado.png", dpi=150)
+plt.show()
