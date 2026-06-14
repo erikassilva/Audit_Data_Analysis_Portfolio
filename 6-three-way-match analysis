@@ -1,0 +1,319 @@
+import pandas as pd
+import numpy as np
+import random
+from datetime import date, timedelta
+
+fornecedores = [
+    "Alpha Supplies",
+    "Beta Systems",
+    "Delta Corp",
+    "Omega Group",
+    "Sigma Partners",
+]
+
+materiais = [
+    "Papel A4",
+    "Toner HP",
+    "Cadeiras",
+    "Monitores",
+    "Cabo HDMI",
+    "Teclados",
+]
+
+centro_custo = [
+    "CC001", 
+    "CC002", 
+    "CC003", 
+    "CC004",
+]
+
+limite_aprovacao = 5000.0
+
+random.seed(42)
+np.random.seed(42)
+
+def criar_ordens_compra(n=50):
+  registros = []
+  for i in range (n):
+    po_numero = f"PO-{202400 + i + 1}"
+    fornecedor = random.choice(fornecedores)
+    material = random.choice(materiais)
+    centro = random.choice(centro_custo)
+    quantidade = random.randint(10, 200)
+    preco = round(random.uniform(5.0, 500.0), 2)
+    valor_total = round(preco * quantidade,2)
+    data_po = date(2024, 1, 1) + timedelta(days=random.randint(0, 364))
+
+    linha = {
+        "po_numero"  : po_numero,
+        "fornecedor" : fornecedor,
+        "material"   : material,
+        "centro_custo": centro,
+        "quantidade" : quantidade,
+        "preco_unit" : preco,
+        "valor_total": valor_total,
+        "data_oc"    : data_po,
+    }
+    registros.append(linha)
+
+    df = pd.DataFrame(registros)
+  
+  return df
+
+  df_po = criar_ordens_compra(n=50)
+
+print(df_po.head())
+
+print(f"\nTabela Criada: {df_po.shape[0]} linhas, {df_po.shape[1]} colunas")
+
+from numpy.random.mtrand import rand
+def criar_gr(df_po):
+  registros = []
+  for i, linha in df_po.iterrows():
+    if random.random() < 0.10:
+      continue
+    gr_numero = f"GR-{302400 + i + 1}"
+    if random.random() < 0.15:
+      fator = random.uniform(0.7, 0.95)
+      qtd_recebida = round(linha["quantidade"] * fator, 0)
+    else:
+      qtd_recebida = round(linha["quantidade"], 0)
+    
+    dias_depois = random.randint(3,21)
+    data_gr = linha["data_oc"] + timedelta(days=dias_depois)
+
+    nr = {
+        "gr_numero" : gr_numero,
+        "po_numero" : linha["po_numero"],
+        "fornecedor" : linha["fornecedor"],
+        "material"   : linha["material"],
+        "centro_custo": linha["centro_custo"],
+        "quantidade_recebida": qtd_recebida,
+        "data_gr"   : data_gr,
+    }
+    registros.append(nr)
+
+    df_nr = pd.DataFrame(registros)
+
+  return df_nr
+
+  df_nr = criar_gr(df_po)
+print(df_nr.head())
+print(f"\nNotas recepcao criadas: {len(df_nr)}")
+print(f"OCs sem recepcao: {len(df_po) - len(df_nr)}")
+
+def criar_faturas(df_po):
+  registros = []
+  contador = 0
+  for i, linha in df_po.iterrows():
+    cenario = random.choices(
+        population=[
+            "normal",
+            "preco_inflacionado",
+            "quantidade_errada",
+            "fatura_duplicada",
+            "fatura_sem_gr",
+        ],
+        weights=[60, 15, 10, 8, 7],
+    )[0]
+
+    qtd_fat = linha["quantidade"]
+    preco_fat = linha["preco_unit"]
+
+    if cenario == "preco_inflacionado":
+      fator_preco = random.uniform(1.05, 1.20)
+      preco_fat   = round(preco_fat * fator_preco, 2)
+
+    elif cenario == "normal":
+      pass
+
+    elif cenario == "quantidade_errada":
+      fator_qtd = random.uniform(1.05, 1.15)
+      qtd_fat   = round(qtd_fat * fator_qtd, 0)  
+
+    elif cenario == "fatura_sem_gr":
+      pass
+
+    contador += 1
+    fatura = {
+        "inv_numero" : f"INV-{4024000 + contador}",
+        "po_numero"  : linha["po_numero"],
+        "fornecedor" : linha["fornecedor"],
+        "material"   : linha["material"],
+        "qtd_faturada": qtd_fat,
+        "preco_fat"  : preco_fat,
+        "valor_fat"  : round(qtd_fat * preco_fat, 2),
+        "data_fat"   : linha["data_oc"] + timedelta(days=random.randint(10, 40)),
+        "cenario"    : cenario,   # coluna auxiliar para validarmos depois
+        }
+
+    registros.append(fatura)
+
+    if cenario == "fatura_duplicada":
+      contador += 1
+      fatura_dup = fatura.copy()
+      fatura_dup["inv_numero"] = f"INV-{2024000 + contador}"
+      fatura_dup["data_fat"] = fatura["data_fat"] + timedelta(days=random.randint(1,5))   
+      registros.append(fatura_dup) 
+
+  df_inv = pd.DataFrame(registros)
+  return df_inv
+
+df_inv = criar_faturas(df_po)
+print(df_inv.head(8))
+print(f"\nFaturas criadas: {len(df_inv)}")
+print(f"\nDistribuição por cenário:")
+print(df_inv["cenario"].value_counts())
+
+print(len(df_inv[df_inv["valor_fat"]>10000.0]))
+
+print(df_inv["fornecedor"].value_counts().head(1))
+
+print(df_inv["valor_fat"].sum().round(2))
+
+def cruzar_tabelas(df_po, df_nr, df_inv):
+  nr_agregada = (
+      df_nr.groupby(by=["po_numero"])
+      .agg(
+           qtd_recebida_total = ("quantidade_recebida", "sum"),
+           n_recepcoes = ("gr_numero", "count"),
+
+      )
+      .reset_index()
+  )
+
+  print("NR agregada por OC:")
+  print(nr_agregada.head())
+
+  fat_count = (
+      df_inv.groupby(by=["po_numero"])
+      .agg(
+          n_faturas = ("inv_numero", "count"))
+      .reset_index()
+  )
+
+  df = df_po.merge(
+      nr_agregada,
+      on = "po_numero",
+      how = "left",
+    )
+
+  df = df.merge(
+      df_inv[[
+           "po_numero",
+            "inv_numero",
+            "qtd_faturada",
+            "preco_fat",
+            "valor_fat",
+            "data_fat",
+            "cenario",
+      ]],
+      on = "po_numero",
+      how = "left",
+  )
+
+  df = df.merge(
+      fat_count,
+      on = "po_numero",
+      how = "left",
+  )
+
+  print(f"\nTabela cruzada: {df.shape[0]} linhas, {df.shape[1]} colunas")
+  print(df.head(3))
+
+  return df
+
+df = cruzar_tabelas(df_po, df_nr, df_inv)
+
+total_preco_pct = 3.0
+total_qtd_pct = 2.0
+
+def calcular_desvios(df):
+  df["desvio_preco_pct"] = (
+      (df["preco_fat"] - df["preco_unit"]) / df["preco_unit"] * 100
+  ).round(2)
+
+  df["desvio_qtd_pct"] = (
+      (df["qtd_faturada"] - df["qtd_recebida_total"]) / df["qtd_recebida_total"] * 100
+  ).round(2)
+
+  df["valor_risco"] = (
+      df["valor_fat"] - (df["qtd_recebida_total"] * df["preco_unit"])
+  ).round(2)
+
+def classificar_linha(linha):
+  if pd.isna(linha["qtd_recebida_total"]):
+    return "FATURA_SEM_GR"
+
+  if linha["n_faturas"] > 1:
+    return "FATURA_DUPLA"
+
+  disc_preco = abs(linha["desvio_preco_pct"]) > total_preco_pct
+  disc_qtd   = abs(linha["desvio_qtd_pct"]) > total_qtd_pct
+
+  if disc_preco and disc_qtd:
+    return "DISC_PRECO_E_QTD"
+  elif disc_preco:
+    return "DISC_PRECO"
+  elif disc_qtd:
+    return "DISC_QTD"
+
+  return "OK"
+
+# Apply the functions and calculate summary in the global scope
+calcular_desvios(df)
+df["classificacao"] = df.apply(classificar_linha, axis=1)
+
+mapa_risco = {
+    "OK"              : "Baixo",
+    "DISC_PRECO"      : "Médio",
+    "DISC_QTD"        : "Médio",
+    "DISC_PRECO_E_QTD": "Alto",
+    "FATURA_SEM_GR"   : "Alto",
+    "FATURA_DUPLA"    : "Crítico",
+}
+df["nivel_risco"] = df["classificacao"].map(mapa_risco)
+
+print("=" * 55)
+print("  RESUMO DO 3-WAY MATCH")
+print("=" * 55)
+
+total     = len(df)
+n_ok      = (df["classificacao"] == "OK").sum()
+n_disc    = total - n_ok
+val_risco = df.loc[
+    df["classificacao"] != "OK", "valor_risco"
+].abs().sum()
+
+print(f"  Total analisado    : {total:>5} registos")
+print(f"  Conformes (OK)     : {n_ok:>5} registos")
+print(f"  Com discrepância   : {n_disc:>5} registos  ({n_disc/total*100:.1f}%)")
+print(f"  Valor em risco     : € {val_risco:>10,.2f}")
+print("-" * 55)
+print("  Detalhe por classificação:")
+print()
+
+for cls, grupo in df.groupby("classificacao"):
+    val = grupo["valor_risco"].abs().sum()
+    print(f"    {cls:<20} {len(grupo):>4} linhas   € {val:>9,.2f}")
+
+print("=" * 55)
+print()
+print("  Top 5 discrepâncias por valor:")
+print()
+
+colunas_ver = [
+    "po_numero", "fornecedor", "material",
+    "classificacao", "desvio_preco_pct",
+    "desvio_qtd_pct", "valor_risco"
+]
+
+top5 = (
+    df[df["classificacao"] != "OK"]
+    .sort_values("valor_risco", key=abs, ascending=False)
+    .head(5)[colunas_ver]
+)
+
+print(top5.to_string(index=False))
+print("=" * 55)
+
